@@ -32,6 +32,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r stat_fix}
 
+# the source from which the stats were imported formatted player names as 
+# "first last *\playercode". This code is to just get the first and last
+
 stats <- stats %>%
   
   mutate(Name = gsub("\\\\.*", "", Name)) %>%
@@ -42,13 +45,15 @@ stats <- stats %>%
   
   group_by(Name, Age) %>%
   
-  summarise(GS, IP, W = sum(W), ERA = mean(ERA), WHIP = mean(WHIP),.groups = "drop") 
+  summarise(GS, IP, W = sum(W), ERA = mean(ERA),
+            WHIP = mean(WHIP),.groups = "drop") 
 
 ```
 
 
 ```{r data_cleaning}
 
+# joining the statistics with the player data from our pitch data set
 
 starting_pitcher_stats <- players %>%
   
@@ -364,9 +369,15 @@ gen_break_speed_graph <- function(pitcher_data) {
   
   pitcher_data %>%
     
+    # filters to just the top 4 pitches
+    
     filter(pitch_type %in% get_top4(pitcher_data)) %>%
     
-    ggplot(aes(y = start_speed, x = break_length, color = get_pitch_name(pitch_type))) +
+    # the plot 
+    
+    ggplot(aes(y = start_speed, 
+               x = break_length, 
+               color = get_pitch_name(pitch_type))) +
     
       geom_jitter(alpha = 0.5, height = 0, width = 1.25, size = 2) + 
     
@@ -389,7 +400,13 @@ gen_selection_graph <- function(pitcher_data) {
   
   pitcher_data %>%
     
+    # we get only the top 4 pitches
+    
     filter(pitch_type %in% get_top4(pitcher_data)) %>% 
+    
+    # we combine the balls and strikes into one count variable, relevel
+    # from most to least pressure on the pitcher, and summarise
+    # to get the count of each pitch in each situation
     
     mutate(count = as.factor(paste0(as.character(b_count), 
                                     as.character(s_count)))) %>%
@@ -401,10 +418,16 @@ gen_selection_graph <- function(pitcher_data) {
     
     summarise(sum = n(), .groups = "drop_last") %>%
     
+    # we want the frequencty of each pitch so that the bars on the graph
+    # extend all the way to the top
+    
     mutate(freq = sum / sum(sum)) %>%
     
+    # the ggplot
+    
     ggplot(aes(fill = fct_relevel(get_pitch_name(pitch_type)
-                                  , rev(map_chr(get_top4(pitcher_data), get_pitch_name))),
+                                  , rev(map_chr(get_top4(pitcher_data),
+                                                get_pitch_name))),
                y = freq, x = count)) + 
     
       geom_bar(position="stack", stat="identity") + 
@@ -429,9 +452,17 @@ gen_outcome_graph <- function(pitcher_data) {
   
   pitcher_data %>% 
     
+    # we simplify all of the outcome codes i.e. ("H") to an easily
+    # understandable english version
+    
     mutate(code = simplify_code(code)) %>%
     
-    mutate(count = as.factor(paste0(as.character(b_count), as.character(s_count)))) %>%
+     # we combine the balls and strikes into one count variable, relevel
+    # from most to least pressure on the pitcher, and summarise
+    # to get the count of each outcome in each situation
+    
+    mutate(count = as.factor(paste0(as.character(b_count), 
+                                    as.character(s_count)))) %>%
   
     group_by(count, code) %>%
     
@@ -440,7 +471,12 @@ gen_outcome_graph <- function(pitcher_data) {
     
     summarise(sum = n(), .groups = "drop_last") %>%
     
+    # we want the frequencty of each pitch so that the bars on the graph
+    # extend all the way to the top
+    
     mutate(freq = sum / sum(sum)) %>%
+    
+    # the plot
     
     ggplot(aes(fill = code, y = freq, x = count)) + 
     
@@ -470,9 +506,15 @@ gen_comp_graph <- function(pitcher_name) {
   
   starting_pitcher_stats %>%
     
+    # we only want labels for the pitcher who we are looking at, so we create
+    # columns that give the pitcher we are looking at a label and a TRUE value,
+    # and all other pitchers a false value with an empty label
+    
     mutate(name = ifelse(name == pitcher_name, TRUE, FALSE)) %>%
     
     mutate(label = ifelse(name == TRUE, pitcher_name, "")) %>%
+    
+    # we normalize all the values between 0 and 1
     
     mutate(WHIP = 1 - (WHIP - min(WHIP))/ (max(WHIP) - min(WHIP))) %>%
     
@@ -485,9 +527,13 @@ gen_comp_graph <- function(pitcher_name) {
     
     rename("Avg. FB Vel." = "average_ff") %>%
     
+    # pivot longer to get all the stats in the same column
+    
     pivot_longer(cols = c("WHIP", "ERA", "W", "Avg. FB Vel."), 
                  names_to = "stat",
                  values_to = "normalized_value") %>%
+    
+    # the plot
     
     ggplot(aes(x = normalized_value,
                y = stat,
@@ -521,25 +567,10 @@ gen_comp_graph <- function(pitcher_name) {
 
 ```
 
-```{r test_graphs}
-
-# test graphs
-
-cole_data <- get_pitcher_data("Gerrit Cole")
-
-gen_break_speed_graph(cole_data)
-
-gen_selection_graph(cole_data)
-
-gen_outcome_graph(cole_data)
-
-gen_comp_graph("Gerrit Cole")
-
-```
-
 ```{r model_creation}
 
-# creating the data for our models
+# creating the data for our models, which we pass to the app through 
+# a saveRDS call
 
 # we want to look at the relationship between pitch metrics and stats, but 
 # don't want to include pitchers who use that pitch infrequently
@@ -564,6 +595,8 @@ get_pitch_utilization <- function(pitch_code, pitcher_name) {
   
 }
 
+# gets a list of pitchers that throw above 10% fastballs
+
 ff_pitchers <- data %>%
   
   filter(get_pitch_utilization("FF", name) > 0.1) %>%
@@ -577,6 +610,8 @@ ff_pitchers <- data %>%
             start_speed = mean(start_speed),  
             break_length = mean(break_length), .groups = "drop")
 
+# gets a list of pitchers that throw above 10% sliders
+
 sl_pitchers <- data %>%
   
   filter(get_pitch_utilization("SL", name) > 0.1) %>%
@@ -589,6 +624,8 @@ sl_pitchers <- data %>%
             WHIP = mean(WHIP), 
             start_speed = mean(start_speed),  
             break_length = mean(break_length), .groups = "drop")
+
+# gets a list of pitchers that throw above 5% curveballs
 
 cu_pitchers <- data %>%
   
@@ -611,6 +648,7 @@ whip_speed_fit <- stan_glm(WHIP ~ start_speed,
                   data = ff_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   
@@ -622,6 +660,7 @@ era_speed_fit <- stan_glm(ERA ~ start_speed,
                   data = ff_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   as_gt() %>%
@@ -632,6 +671,7 @@ whip_sl_fit <- stan_glm(WHIP ~ break_length,
                   data = sl_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   as_gt() %>%
@@ -642,6 +682,7 @@ era_sl_fit <- stan_glm(ERA ~ break_length,
                   data = sl_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   as_gt() %>%
@@ -652,6 +693,7 @@ whip_cu_fit <- stan_glm(WHIP ~ break_length,
                   data = cu_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   as_gt() %>%
@@ -662,6 +704,7 @@ era_cu_fit <- stan_glm(ERA ~ break_length,
                   data = cu_pitchers,
                   family = gaussian(), 
                   refresh = 0) %>%
+  
   tbl_regression(intercept = TRUE, 
                  estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
   as_gt() %>%
@@ -671,33 +714,6 @@ era_cu_fit <- stan_glm(ERA ~ break_length,
 
 
 ```
-
-```{r model_test}
-
-whip_speed_fit
-
-era_speed_fit
-
-whip_sl_fit
-
-era_sl_fit
-
-whip_cu_fit
-
-era_cu_fit
-
-
-```
-```{r}
-
-# testing out missing data
-
-cole_data <- get_pitcher_data("Justin Verlander")
-
-cole_data
-
-cole_data %>% 
-  filter(b_count == 3 & s_count == 2)
 
 ```
 

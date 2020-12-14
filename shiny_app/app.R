@@ -278,9 +278,15 @@ gen_break_speed_graph <- function(pitcher_data) {
     
     pitcher_data %>%
         
+        # filters to just the top 4 pitches
+        
         filter(pitch_type %in% get_top4(pitcher_data)) %>%
         
-        ggplot(aes(y = start_speed, x = break_length, color = get_pitch_name(pitch_type))) +
+        # the plot 
+        
+        ggplot(aes(y = start_speed, 
+                   x = break_length, 
+                   color = get_pitch_name(pitch_type))) +
         
         geom_jitter(alpha = 0.5, height = 0, width = 1.25, size = 2) + 
         
@@ -303,7 +309,13 @@ gen_selection_graph <- function(pitcher_data) {
     
     pitcher_data %>%
         
+        # we get only the top 4 pitches
+        
         filter(pitch_type %in% get_top4(pitcher_data)) %>% 
+        
+        # we combine the balls and strikes into one count variable, relevel
+        # from most to least pressure on the pitcher, and summarise
+        # to get the count of each pitch in each situation
         
         mutate(count = as.factor(paste0(as.character(b_count), 
                                         as.character(s_count)))) %>%
@@ -315,10 +327,16 @@ gen_selection_graph <- function(pitcher_data) {
         
         summarise(sum = n(), .groups = "drop_last") %>%
         
+        # we want the frequencty of each pitch so that the bars on the graph
+        # extend all the way to the top
+        
         mutate(freq = sum / sum(sum)) %>%
         
+        # the ggplot
+        
         ggplot(aes(fill = fct_relevel(get_pitch_name(pitch_type)
-                                      , rev(map_chr(get_top4(pitcher_data), get_pitch_name))),
+                                      , rev(map_chr(get_top4(pitcher_data),
+                                                    get_pitch_name))),
                    y = freq, x = count)) + 
         
         geom_bar(position="stack", stat="identity") + 
@@ -343,18 +361,32 @@ gen_outcome_graph <- function(pitcher_data) {
     
     pitcher_data %>% 
         
+        # we simplify all of the outcome codes i.e. ("H") to an easily
+        # understandable english version
+        
         mutate(code = simplify_code(code)) %>%
         
-        mutate(count = as.factor(paste0(as.character(b_count), as.character(s_count)))) %>%
+        # we combine the balls and strikes into one count variable, relevel
+        # from most to least pressure on the pitcher, and summarise
+        # to get the count of each outcome in each situation
+        
+        mutate(count = as.factor(paste0(as.character(b_count), 
+                                        as.character(s_count)))) %>%
         
         group_by(count, code) %>%
         
-        mutate(count = fct_relevel(count, "30", "31", "20", "32", "21", "10", "00", 
+        mutate(count = fct_relevel(count, "30", "31", "20", "32", 
+                                   "21", "10", "00", 
                                    "11", "01", "22", "12", "02")) %>%
         
         summarise(sum = n(), .groups = "drop_last") %>%
         
+        # we want the frequencty of each pitch so that the bars on the graph
+        # extend all the way to the top
+        
         mutate(freq = sum / sum(sum)) %>%
+        
+        # the plot
         
         ggplot(aes(fill = code, y = freq, x = count)) + 
         
@@ -384,9 +416,15 @@ gen_comp_graph <- function(pitcher_name) {
     
     starting_pitcher_stats %>%
         
+        # we only want labels for the pitcher who we are looking at, so we
+        # create columns that give the pitcher we are looking at a label and a
+        # TRUE value, and all other pitchers a false value with an empty label
+        
         mutate(name = ifelse(name == pitcher_name, TRUE, FALSE)) %>%
         
         mutate(label = ifelse(name == TRUE, pitcher_name, "")) %>%
+        
+        # we normalize all the values between 0 and 1
         
         mutate(WHIP = 1 - (WHIP - min(WHIP))/ (max(WHIP) - min(WHIP))) %>%
         
@@ -399,9 +437,13 @@ gen_comp_graph <- function(pitcher_name) {
         
         rename("Avg. FB Vel." = "average_ff") %>%
         
+        # pivot longer to get all the stats in the same column
+        
         pivot_longer(cols = c("WHIP", "ERA", "W", "Avg. FB Vel."), 
                      names_to = "stat",
                      values_to = "normalized_value") %>%
+        
+        # the plot
         
         ggplot(aes(x = normalized_value,
                    y = stat,
@@ -435,87 +477,97 @@ gen_comp_graph <- function(pitcher_name) {
 
 # ------------------------------ SHINY APP UI ------------------------------
 
-
-
 ui <- fluidPage(theme = shinytheme("paper"),
     
     navbarPage("MLB - 2019",
     
-               
-               tabPanel("About",
-                        
-                        tags$div(style = "width:80%; margin:auto",
-                                 htmlOutput("about_title"),
-                                 # imageOutput("yankee_stadium"),
-                                 htmlOutput("about_page")
-                        )
-                        
-               ),
-               
-               tabPanel("Data",
-                        
-                        sidebarPanel(
-                            
-                            # select a players whose stats you want to see
-                            
-                            selectInput("player_select",
-                                        label = "Select a Starting Pitcher",
-                                        choices = as.vector(starting_pitcher_stats$name),
-                                        selected = "Gerrit Cole"),
-                            
-                            radioButtons("graph_select",
-                                         label = "Select a Graph Type",
-                                         choices = c("Stats Compared to Other Starters",
-                                                     "Speed and Break of Top 4 Pitches",
-                                                     "Pitch Selection under Pressure",
-                                                     "Pitch Outcomes under Pressure"),
-                                         selected = "Stats Compared to Other Starters")
-                            
-                        ),
-                        
-                        mainPanel(
-                            
-                            plotOutput("data_graph"),
-                            
-                            htmlOutput("graph_explination")
-                        )
-                        
-               ),
-               
-               tabPanel("Model",
-                        
-                        sidebarPanel(
-                            
-                            # select a model
-                            
-                            selectInput("stat_select",
-                                        label = "Select an Outcome Variable",
-                                        choices = c("WHIP", "ERA"),
-                                        selected = "ERA"),
-                            
-                            radioButtons("var_select",
-                                         label = "Select a variable to measure by",
-                                         choices = c("Fastball Velocity", 
-                                                     "Slider Break",
-                                                     "Curveball Break"),
-                                         selected = "Fastball Velocity")
-                            
-                        ),  
-                        
-                        mainPanel(
-                            
-                            gt_output("model_output"),
-                            
-                            htmlOutput("model_explination")
-                        )
-                        
-               )
+       # The main about page
+       
+       tabPanel("About",
+                
+                tags$div(style = "width:80%; margin:auto",
+                         htmlOutput("about_title"),
+                         htmlOutput("about_page")
+                )
+                
+       ),
+       
+       # data panel 
+       
+       tabPanel("Data",
+                
+            sidebarPanel(
+                    
+                # select a players whose stats you want to see
+                
+                selectInput("player_select",
+                            label = "Select a Starting Pitcher",
+                            choices = as.vector(starting_pitcher_stats$name),
+                            selected = "Gerrit Cole"),
+                
+                # select a stat to look at
+                
+                radioButtons("graph_select",
+                             label = "Select a Graph Type",
+                             choices = c("Stats Compared to Other Starters",
+                                         "Speed and Break of Top 4 Pitches",
+                                         "Pitch Selection under Pressure",
+                                         "Pitch Outcomes under Pressure"),
+                             selected = "Stats Compared to Other Starters")
+                
+            ),
+                
+            mainPanel(
+                
+                # output a graph and it's corresponding explanation
+                
+                plotOutput("data_graph"),
+                
+                htmlOutput("graph_explination")
+                
+            )
+                
+       ),
+       
+       # page for the models
+       
+       tabPanel("Model",
+                
+                sidebarPanel(
+                    
+                    # select a model
+                    
+                    selectInput("stat_select",
+                                label = "Select an Outcome Variable",
+                                choices = c("WHIP", "ERA"),
+                                selected = "ERA"),
+                    
+                    radioButtons("var_select",
+                                 label = "Select a variable to measure by",
+                                 choices = c("Fastball Velocity", 
+                                             "Slider Break",
+                                             "Curveball Break"),
+                                 selected = "Fastball Velocity")
+                    
+                ),  
+                
+                mainPanel(
+                    
+                    gt_output("model_output"),
+                    
+                    htmlOutput("model_explination")
+                )
+                
+       )
                
     )
 )
 
 
 # ------------------------------------ HTML ELEMENTS -----------------------
+
+# theses are the html elements for all of the descriptions for the graphs and 
+# the models
 
 about_title_html <- HTML(
     paste(
