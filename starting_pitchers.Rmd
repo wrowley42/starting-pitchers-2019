@@ -1,0 +1,708 @@
+---
+title: "Under Pressure Building Blocks"
+author: "Will Rowley"
+date: "11/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# libraries
+
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(rstanarm)
+library(gt)
+library(broom)
+library(gtsummary)
+library(broom.mixed)
+
+# read in files
+
+atbats <- read.csv("raw_baseball_data/2019_atbats.csv")
+
+pitches <- read.csv("raw_baseball_data/2019_pitches.csv")
+
+stats <- read.csv("raw_baseball_data/stats.csv")
+
+players <- read.csv("raw_baseball_data/player_names.csv")
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r stat_fix}
+
+stats <- stats %>%
+  
+  mutate(Name = gsub("\\\\.*", "", Name)) %>%
+  
+  mutate(Name = gsub("[*]", "", Name)) %>%
+  
+  select(Name, Age, W, ERA, GS, IP, ERA, WHIP) %>% 
+  
+  group_by(Name, Age) %>%
+  
+  summarise(GS, IP, W = sum(W), ERA = mean(ERA), WHIP = mean(WHIP),.groups = "drop") 
+
+```
+
+
+```{r data_cleaning}
+
+
+starting_pitcher_stats <- players %>%
+  
+  mutate(name = paste(first_name, last_name)) %>%
+  
+  select(-first_name, -last_name) %>%
+
+  # we change the name of the Player column in out stats data set to align 
+  # with our player dataset which has our player ids
+  
+  left_join(stats %>% rename(name = Name), by = "name") %>%
+  
+  # we drop nas here which gets rid of all non-pitchers
+  
+  drop_na() %>%
+  
+  # Regular starting pitcher stats. We define a regular starting pitcher as 
+  # someone who has pitched more than 15 innings over 5 starts
+  
+  filter(GS >= 20) %>%
+  
+  # we dont care about any columns here other than the performance stats 
+  # (whip and era) , name, and id
+  
+  select(id, name, ERA, WHIP, W) %>%
+  
+  # have to rename the id class to join with the at bats tibble
+  
+  rename(pitcher_id = id)
+
+# next, we add this information into the at bats data
+
+data <- starting_pitcher_stats %>% 
+  
+  right_join(atbats, by = "pitcher_id")%>%
+  
+  right_join(pitches, by = "ab_id") %>%
+  
+  select(pitcher_id, name, ERA, WHIP, start_speed, break_length, pitch_type,
+         b_count, s_count, code, ab_id) %>%
+  
+  drop_na() 
+
+# we also need to normalize the values for break length and speed for different
+# pitchers
+
+# creating a tibble with the average fast ball speeds
+
+avg_ff <- data %>%
+  
+  filter(pitch_type == "FF") %>%
+  
+  group_by(name) %>%
+  
+  summarise(average_ff = mean(start_speed), .groups = "drop")
+
+# add average speed to stats
+
+starting_pitcher_stats <- starting_pitcher_stats %>% 
+  
+  right_join(avg_ff, by = "name") %>%
+  
+  arrange(name)
+
+
+```
+
+```{r functions}
+
+# function to get pitchers top 4 pitches
+
+get_pitcher_data <- function(pitcher_name) {
+  
+  data %>% 
+    
+    filter(name == pitcher_name)
+  
+}
+
+# gets a pitchers top 4 pitches, given the data submitted
+
+get_top4 <- function(pitcher_data) {
+  
+  pitcher_data %>% 
+    
+    group_by(pitch_type) %>%
+    
+    summarise(count = n(), .groups = "drop") %>%
+    
+    arrange(desc(count)) %>%
+    
+    slice(1:4) %>%
+    
+    select(pitch_type) %>%
+    
+    as_vector()
+  
+}
+
+# returns a vector of colors for the pitches
+
+get_pitch_color <- function(pitch) {
+  
+  case_when(
+    
+    pitch == "CH" ~ "blue4",
+  
+    pitch == "CU" ~ "darkorchid",
+  
+    pitch == "EP" ~ "Eephus",
+  
+    pitch == "FC" ~ "Cutter",
+  
+    pitch == "FF" ~ "red3",
+  
+    pitch == "FO" ~ "Pitchout",
+  
+    pitch == "FS" ~ "Splitter",
+  
+    pitch == "FT" ~ "Two-seam Fastball",
+  
+    pitch == "IN" ~ "Intentional ball",
+  
+    pitch == "KC" ~ "darkorchid",
+  
+    pitch == "KN" ~ "Knuckeball",
+  
+    pitch == "PO" ~ "Pitchout" ,
+  
+    pitch == "SC" ~ "Screwball",
+  
+    pitch == "SI" ~ "Sinker",
+  
+    pitch == "SL" ~ "forestgreen",
+  
+    pitch == "UN" ~ "Unknown"
+  
+  )
+  
+}
+
+# manual scale color to equal pitch
+
+scale_color_pitch <- function(){
+    ggplot2:::manual_scale(
+        'color',
+        values = setNames(c("dodgerblue3",
+                            "darkorchid2",
+                            "darkseagreen3",
+                            "darkorange2",
+                            "firebrick2",
+                            "gray1",
+                            "darkslategray2",
+                            "firebrick4",
+                            "gray",
+                            "darkorchid4",
+                            "darkslateblue",
+                            "ghostwhite" ,
+                            "royalblue3",
+                            "tomato3",
+                            "darkgreen",
+                            "whitesmoke"), 
+                          c("Changeup",
+                            "Curveball",
+                            "Eephus",
+                            "Cutter",
+                            "Four-seam Fastball",
+                            "Pitchout",
+                            "Splitter",
+                            "Two-seam Fastball",
+                            "Intentional ball",
+                            "Knuckle curve",
+                            "Knuckeball",
+                            "Pitchout" ,
+                            "Screwball",
+                            "Sinker",
+                            "Slider",
+                            "Unknown"))
+    )
+}
+
+# manual scale color to equal pitch
+
+scale_fill_pitch <- function(){
+    ggplot2:::manual_scale(
+        'fill',
+        values = setNames(c("dodgerblue3",
+                            "darkorchid2",
+                            "darkseagreen3",
+                            "darkorange2",
+                            "firebrick2",
+                            "gray1",
+                            "darkslategray2",
+                            "firebrick4",
+                            "gray",
+                            "darkorchid4",
+                            "darkslateblue",
+                            "ghostwhite" ,
+                            "royalblue3",
+                            "tomato3",
+                            "darkgreen",
+                            "whitesmoke"), 
+                          c("Changeup",
+                            "Curveball",
+                            "Eephus",
+                            "Cutter",
+                            "Four-seam Fastball",
+                            "Pitchout",
+                            "Splitter",
+                            "Two-seam Fastball",
+                            "Intentional ball",
+                            "Knuckle curve",
+                            "Knuckeball",
+                            "Pitchout" ,
+                            "Screwball",
+                            "Sinker",
+                            "Slider",
+                            "Unknown"))
+    )
+}
+
+
+# returns a vector with the full names of pitch abbreviations passed in
+
+get_pitch_name <- function(pitch) {
+  
+  case_when(
+    
+    pitch == "CH" ~ "Changeup",
+  
+    pitch == "CU" ~ "Curveball",
+  
+    pitch == "EP" ~ "Eephus",
+  
+    pitch == "FC" ~ "Cutter",
+  
+    pitch == "FF" ~ "Four-seam Fastball",
+  
+    pitch == "FO" ~ "Pitchout",
+  
+    pitch == "FS" ~ "Splitter",
+  
+    pitch == "FT" ~ "Two-seam Fastball",
+  
+    pitch == "IN" ~ "Intentional ball",
+  
+    pitch == "KC" ~ "Knuckle curve",
+  
+    pitch == "KN" ~ "Knuckeball",
+  
+    pitch == "PO" ~ "Pitchout" ,
+  
+    pitch == "SC" ~ "Screwball",
+  
+    pitch == "SI" ~ "Sinker",
+  
+    pitch == "SL" ~ "Slider",
+  
+    pitch == "UN" ~ "Unknown"
+  
+  )
+  
+}
+
+# simplify codes to strke, ball, in play / hit and in play / out 
+
+simplify_code <- function(code) {
+  
+  case_when(
+    
+    code == "B" ~ "Ball",
+    
+    code == "*B" ~ "Ball",
+    
+    code == "S" ~ "Strike",
+    
+    code == "C" ~ "Strike",
+    
+    code == "F" ~ "Foul",
+    
+    code == "T" ~ "Foul",
+    
+    code == "L" ~ "Foul",
+    
+    code == "I" ~ "Ball",
+    
+    code == "W" ~ "Strike",
+    
+    code == "M" ~ "Strike",
+    
+    code == "P" ~ "Ball",
+    
+    code == "Q" ~ "Strike",
+    
+    code == "R" ~ "Foul",
+  
+    code == "E" ~ "In Play: Hit",
+    
+    code == "D" ~ "In Play: Hit",
+    
+    code == "X" ~ "In Play: Out",
+    
+    code == "H" ~ "In Play: Hit"
+  
+  )
+  
+  
+}
+
+# given a pitchers data, generates a graph of that pitchers top 4 pitches
+
+gen_break_speed_graph <- function(pitcher_data) {
+  
+  pitcher_data %>%
+    
+    filter(pitch_type %in% get_top4(pitcher_data)) %>%
+    
+    ggplot(aes(y = start_speed, x = break_length, color = get_pitch_name(pitch_type))) +
+    
+      geom_jitter(alpha = 0.5, height = 0, width = 1.25, size = 2) + 
+    
+      labs(x = "Breaklength (in.)", y = "Velocity (MPH)", 
+           title = paste("Speed and Break of ",
+                         as.character(pitcher_data$name[1]),
+                         "'s Pitches", 
+                         sep = ""),
+           color = "Pitch") +
+      
+      theme_minimal() + 
+      
+      scale_color_pitch() 
+  
+}
+
+# Graph that shows pitch selection relative to pressure
+
+gen_selection_graph <- function(pitcher_data) {
+  
+  pitcher_data %>%
+    
+    filter(pitch_type %in% get_top4(pitcher_data)) %>% 
+    
+    mutate(count = as.factor(paste0(as.character(b_count), 
+                                    as.character(s_count)))) %>%
+    
+    group_by(count, pitch_type) %>%
+    
+    mutate(count = fct_relevel(count, "30", "31", "20", "32", "21", "10", "00", 
+                               "11", "01", "22", "12", "02")) %>%
+    
+    summarise(sum = n(), .groups = "drop_last") %>%
+    
+    mutate(freq = sum / sum(sum)) %>%
+    
+    ggplot(aes(fill = fct_relevel(get_pitch_name(pitch_type)
+                                  , rev(map_chr(get_top4(pitcher_data), get_pitch_name))),
+               y = freq, x = count)) + 
+    
+      geom_bar(position="stack", stat="identity") + 
+    
+      labs(x = "Pitch count from hitter's to pitcher's advatage",
+           y = "Frequency (%)", 
+           title = paste("Pitch Selection of ",
+                         as.character(pitcher_data$name[1]),
+                         "'s Pitches", 
+                         sep = ""),
+           fill = "Pitch") +
+    
+      theme_minimal() + 
+      
+      scale_fill_pitch() 
+  
+}
+
+# Graph that shows outcomes relative to pressure
+
+gen_outcome_graph <- function(pitcher_data) {
+  
+  pitcher_data %>% 
+    
+    mutate(code = simplify_code(code)) %>%
+    
+    mutate(count = as.factor(paste0(as.character(b_count), as.character(s_count)))) %>%
+  
+    group_by(count, code) %>%
+    
+    mutate(count = fct_relevel(count, "30", "31", "20", "32", "21", "10", "00", 
+                               "11", "01", "22", "12", "02")) %>%
+    
+    summarise(sum = n(), .groups = "drop_last") %>%
+    
+    mutate(freq = sum / sum(sum)) %>%
+    
+    ggplot(aes(fill = code, y = freq, x = count)) + 
+    
+      geom_bar(position="stack", stat="identity") + 
+    
+      scale_fill_manual(name = "Outcome",
+                        labels = c("Ball", "Foul", "In Play - Hit", 
+                                   "In Play - Out", "Strike", "NA"),
+                        values = c("dodgerblue3", "darkgreen", "darkorchid2", 
+                                   "darkorange2", "firebrick4", "black")) +
+    
+       labs(x = "Pitch count from hitter's to pitcher's advatage",
+           y = "Frequency (%)", 
+           title = paste("Pitch Outcomes of ",
+                         as.character(pitcher_data$name[1]),
+                         "'s Pitches", 
+                         sep = ""),
+           fill = "Outcome") + 
+    
+      theme_minimal()
+    
+}
+
+# Graph that shows how they compare to other pitchers
+
+gen_comp_graph <- function(pitcher_name) {
+  
+  starting_pitcher_stats %>%
+    
+    mutate(name = ifelse(name == pitcher_name, TRUE, FALSE)) %>%
+    
+    mutate(label = ifelse(name == TRUE, pitcher_name, "")) %>%
+    
+    mutate(WHIP = 1 - (WHIP - min(WHIP))/ (max(WHIP) - min(WHIP))) %>%
+    
+    mutate(ERA = 1 - (ERA - min(ERA))/ (max(ERA) - min(ERA))) %>%
+    
+    mutate(W = (W - min(W))/ (max(W) - min(W))) %>%
+    
+    mutate(average_ff = (average_ff - min(average_ff))/ 
+                        (max(average_ff) - min(average_ff))) %>%
+    
+    rename("Avg. FB Vel." = "average_ff") %>%
+    
+    pivot_longer(cols = c("WHIP", "ERA", "W", "Avg. FB Vel."), 
+                 names_to = "stat",
+                 values_to = "normalized_value") %>%
+    
+    ggplot(aes(x = normalized_value,
+               y = stat,
+               label = label,
+               color = ifelse(name == TRUE, "gold2", "black"),
+               shape = ifelse(name == TRUE, "star", "circle"),
+               size = ifelse(name == TRUE, 3, 2))) +
+
+      geom_point(alpha = 0.6) +
+    
+      geom_text(nudge_y = 0.3, color = "gold2", size = 4) +
+    
+      scale_color_manual(values = c("darkgreen", "gold1")) +
+    
+      scale_shape_manual(values = c(16, 18)) +
+    
+      labs(title = paste(as.character(pitcher_name),
+                         " Compared to Other Starting Pitchers", 
+                         sep = ""),
+           y = "Statistic",
+           x = "") + 
+    
+      scale_x_continuous(breaks = c(0, 1),
+                         labels = c("Worst", "Best")) +
+
+      theme_minimal() + 
+    
+      theme(legend.position = "none")
+    
+}
+
+```
+
+```{r test_graphs}
+
+# test graphs
+
+cole_data <- get_pitcher_data("Gerrit Cole")
+
+gen_break_speed_graph(cole_data)
+
+gen_selection_graph(cole_data)
+
+gen_outcome_graph(cole_data)
+
+gen_comp_graph("Gerrit Cole")
+
+```
+
+```{r model_creation}
+
+# creating the data for our models
+
+# we want to look at the relationship between pitch metrics and stats, but 
+# don't want to include pitchers who use that pitch infrequently
+
+get_pitch_utilization <- function(pitch_code, pitcher_name) {
+  
+  data %>%
+    
+    filter(name == pitcher_name) %>%
+    
+    group_by(pitch_type) %>%
+    
+    summarise(count = n(), .groups = "drop") %>%
+    
+    mutate(freq = count / sum(count)) %>%
+    
+    filter(pitch_type == pitch_code) %>%
+    
+    select(freq) %>%
+    
+    as.numeric()
+  
+}
+
+ff_pitchers <- data %>%
+  
+  filter(get_pitch_utilization("FF", name) > 0.1) %>%
+  
+  filter(pitch_type == "FF") %>%
+  
+  group_by(name) %>% 
+  
+  summarise(ERA = mean(ERA), 
+            WHIP = mean(WHIP), 
+            start_speed = mean(start_speed),  
+            break_length = mean(break_length), .groups = "drop")
+
+sl_pitchers <- data %>%
+  
+  filter(get_pitch_utilization("SL", name) > 0.1) %>%
+  
+  filter(pitch_type == "SL") %>%
+  
+  group_by(name) %>% 
+  
+  summarise(ERA = mean(ERA), 
+            WHIP = mean(WHIP), 
+            start_speed = mean(start_speed),  
+            break_length = mean(break_length), .groups = "drop")
+
+cu_pitchers <- data %>%
+  
+  filter(get_pitch_utilization("CU", name) + 
+         get_pitch_utilization("KC", name)  > 0.05) %>%
+  
+  filter(pitch_type %in% c("CU", "KC")) %>%
+  
+  group_by(name) %>% 
+  
+  summarise(ERA = mean(ERA), 
+            WHIP = mean(WHIP), 
+            start_speed = mean(start_speed),  
+            break_length = mean(break_length), .groups = "drop")
+
+
+# creating our models
+
+whip_speed_fit <- stan_glm(WHIP ~ start_speed,
+                  data = ff_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  
+  as_gt() %>%
+  
+  tab_header(title = "WHIP as a function of Fastball Velocity")
+
+era_speed_fit <- stan_glm(ERA ~ start_speed,
+                  data = ff_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  as_gt() %>%
+  
+  tab_header(title = "ERA as a function of Fastball Velocity")
+
+whip_sl_fit <- stan_glm(WHIP ~ break_length,
+                  data = sl_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  as_gt() %>%
+  
+  tab_header(title = "WHIP as a function of Slider Break")
+
+era_sl_fit <- stan_glm(ERA ~ break_length,
+                  data = sl_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  as_gt() %>%
+  
+  tab_header(title = "ERA as a function of Slider Break")
+
+whip_cu_fit <- stan_glm(WHIP ~ break_length,
+                  data = cu_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  as_gt() %>%
+  
+  tab_header(title = "WHIP as a function of Curveball Break")
+
+era_cu_fit <- stan_glm(ERA ~ break_length,
+                  data = cu_pitchers,
+                  family = gaussian(), 
+                  refresh = 0) %>%
+  tbl_regression(intercept = TRUE, 
+                 estimate_fun = function(x) style_sigfig(x, digits = 5)) %>%
+  as_gt() %>%
+  
+  tab_header(title = "ERA as a function of Curveball Break")
+
+
+
+```
+
+```{r model_test}
+
+whip_speed_fit
+
+era_speed_fit
+
+whip_sl_fit
+
+era_sl_fit
+
+whip_cu_fit
+
+era_cu_fit
+
+
+```
+```{r}
+
+# testing out missing data
+
+cole_data <- get_pitcher_data("Justin Verlander")
+
+cole_data
+
+cole_data %>% 
+  filter(b_count == 3 & s_count == 2)
+
+```
+
+
+
+
+
+
